@@ -45,11 +45,13 @@ IDENTIFIER_NUMBERS = {
     'baggage_size':      2_200_000,
     'eyewear_size':      2_300_000,
     'one_size':          2_400_000,
+    'shoes_number_uk':   2_500_000,
 }
 
 # 'Einheitsgröße' always gets this absolute order — injected into every group
 EINHEITSGROESSE_GT_SIZE  = 'Einheitsgröße'
-EINHEITSGROESSE_GT_ORDER = 10 ** 10
+EINHEITSGROESSE_GT_ORDER = 1_000_000_000
+EINHEITSGROESSE_GROUPING = 'one_size'
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -69,7 +71,7 @@ def _build_df(sorted_sizes: list, group_name: str) -> pd.DataFrame:
     rows.append({
         'gt_size': EINHEITSGROESSE_GT_SIZE,
         'gt_size_order': EINHEITSGROESSE_GT_ORDER,
-        'size_grouping': "one_size",
+        'size_grouping': EINHEITSGROESSE_GROUPING,
     })
     return pd.DataFrame(rows)
 
@@ -534,17 +536,89 @@ def eyewear_size_sort(sizes: list) -> pd.DataFrame:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 15. one_size  — only Einheitsgröße at fixed order 10^10
+# 15. one_size  — only Einheitsgröße at its fixed absolute order
 # ─────────────────────────────────────────────────────────────────────────────
 
 def one_size_sort(sizes=None) -> pd.DataFrame:
     """
-    one_size group: only entry is 'Einheitsgröße' at absolute order 10^10.
+    one_size group: only entry is 'Einheitsgröße' at EINHEITSGROESSE_GT_ORDER.
     """
     return pd.DataFrame([{
         'gt_size': EINHEITSGROESSE_GT_SIZE,
         'gt_size_order': EINHEITSGROESSE_GT_ORDER,
-        'size_grouping': 'one_size',
+        'size_grouping': EINHEITSGROESSE_GROUPING,
     }])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 16. shoes_number_uk  — UK shoe sizes: numeric → standard (XS-XXL) → cm
+# ─────────────────────────────────────────────────────────────────────────────
+
+_UK_SHOES_STANDARD_RANK = {
+    "XX-SMALL": 1, "X-SMALL": 2, "XS": 2,
+    "SMALL": 3, "S": 3,
+    "MEDIUM": 4, "M": 4,
+    "LARGE": 5, "L": 5,
+    "X-LARGE": 6, "XL": 6,
+    "XX-LARGE": 7, "XXL": 7,
+    "3XL": 8, "4XL": 9, "5XL": 10,
+}
+_UK_SHOES_AGE_PRIORITY = {"Child": 0, "Adult": 1}
+_UK_SHOES_STYLE_PRIORITY = {
+    "Narrow": 0,
+    "Gender": 1,   # Men/Women
+    "Normal": 2,
+    "Wide": 3,
+    "X-Wide": 4,
+}
+
+def _uk_shoes_number_key(size):
+    s = str(size).strip()
+
+    # cm sizes (after standard sizes)
+    if "cm" in s:
+        m = re.search(r'(\d+(?:\.\d+)?)', s)
+        num = float(m.group(1)) if m else 999_999.0
+        return (4, num, 0, 0, 0)
+
+    # Standard sizes (XS, S, M, L, XL … optionally with a trailing number)
+    for std, rank in _UK_SHOES_STANDARD_RANK.items():
+        if re.match(rf'^{re.escape(std)}(\b|\s)', s):
+            m = re.search(r'\d+(?:\.\d+)?', s)
+            if m:
+                return (3, rank, float(m.group()), 0, 0)
+            return (2, rank, 0, 0, 0)
+
+    # Numeric UK sizes, with age / width / gender tie-breaks
+    m = re.search(r'(\d+(?:\.\d+)?)', s)
+    number = float(m.group(1)) if m else 999_999.0
+
+    age = _UK_SHOES_AGE_PRIORITY["Child"] if "Child" in s else _UK_SHOES_AGE_PRIORITY["Adult"]
+
+    if "Narrow" in s:
+        style = _UK_SHOES_STYLE_PRIORITY["Narrow"]
+    elif " Men" in s or " Women" in s:
+        style = _UK_SHOES_STYLE_PRIORITY["Gender"]
+    elif "X-Wide" in s:
+        style = _UK_SHOES_STYLE_PRIORITY["X-Wide"]
+    elif "Wide" in s:
+        style = _UK_SHOES_STYLE_PRIORITY["Wide"]
+    else:
+        style = _UK_SHOES_STYLE_PRIORITY["Normal"]
+
+    return (1, number, age, style, s)
+
+def shoes_number_uk_sort(sizes: list) -> pd.DataFrame:
+    """
+    UK shoe sizes ('6 UK', '9.5 UK Child', '4 UK Men/ 5 UK Women', '8 UK Wide' …),
+    standard letter sizes (XS-XXL), and cm sizes.
+    Sorted by (numeric ASC, age: Child before Adult, style: Narrow < Gender < Normal < Wide < X-Wide);
+    standard sizes sort before numeric UK sizes, cm sizes sort last.
+    'One Size' is stripped from the source (the shared one_size sentinel is appended instead).
+    """
+    sizes = [s for s in sizes if str(s).strip().lower() != 'one size']
+    unique  = _clean_deduplicate(sizes)
+    ordered = sorted(unique, key=_uk_shoes_number_key)
+    return _build_df(ordered, 'shoes_number_uk')
 
 
